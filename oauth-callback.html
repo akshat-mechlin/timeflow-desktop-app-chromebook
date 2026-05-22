@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TimeFlow — Login</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(to right, #2563eb, #9333ea);
+      color: #fff;
+      text-align: center;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      color: #333;
+      padding: 32px;
+      border-radius: 12px;
+      max-width: 400px;
+    }
+    h1 { font-size: 1.25rem; margin-bottom: 8px; }
+    p { font-size: 0.95rem; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="status">Completing sign-in…</h1>
+    <p id="detail">You can close this window shortly.</p>
+  </div>
+  <script>
+    (function () {
+      const hash = window.location.hash ? window.location.hash.substring(1) : '';
+      const search = window.location.search ? window.location.search.substring(1) : '';
+      const params = new URLSearchParams(hash || search);
+      const access_token = params.get('access_token');
+      const refresh_token = params.get('refresh_token');
+      const payload = { access_token, refresh_token, success: !!(access_token && refresh_token) };
+
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'timeflow-oauth-callback', payload }, window.location.origin);
+        document.getElementById('status').textContent = 'Login successful';
+        document.getElementById('detail').textContent = 'Returning to TimeFlow…';
+        setTimeout(function () { window.close(); }, 1500);
+        return;
+      }
+
+      try {
+        localStorage.setItem('timeflow-oauth-pending', JSON.stringify(payload));
+      } catch (e) { /* ignore */ }
+
+      document.getElementById('status').textContent = payload.success ? 'Login successful' : 'Login failed';
+      document.getElementById('detail').textContent = payload.success
+        ? 'Redirecting to TimeFlow…'
+        : 'No tokens received. Close this tab and try again.';
+      if (payload.success) {
+        setTimeout(function () { window.location.href = '/'; }, 1200);
+      }
+    })();
+  </script>
+</body>
+</html>
