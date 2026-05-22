@@ -32,9 +32,15 @@ export default defineConfig({
       crypto: resolve(__dirname, 'lib/crypto-stub.js'),
     },
   },
+  optimizeDeps: {
+    include: ['buffer', 'process/browser', '@supabase/supabase-js'],
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    },
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),

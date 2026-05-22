@@ -11,4 +11,16 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-import '../renderer.js';
+// Defer renderer so polyfills are ready and avoid circular init in the bundle
+import('../renderer.js').catch((err) => {
+  console.error('Failed to start TimeFlow:', err);
+  const loading = document.getElementById('loading-container');
+  const login = document.getElementById('login-container');
+  if (loading) loading.classList.add('hidden');
+  if (login) login.classList.remove('hidden');
+  const errEl = document.getElementById('error-message');
+  if (errEl) {
+    errEl.textContent = 'Failed to load the app. Please refresh the page.';
+    errEl.style.color = '#ef4444';
+  }
+});

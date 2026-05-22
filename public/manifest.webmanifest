@@ -2,14 +2,14 @@
   "name": "TimeFlow",
   "short_name": "TimeFlow",
   "description": "TimeFlow time tracker for Chromebook",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#2563eb",
   "theme_color": "#2563eb",
   "orientation": "any",
   "icons": [
     {
-      "src": "/assets/timeflowicon.svg",
+      "src": "assets/timeflowicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"

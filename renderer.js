@@ -1,15 +1,16 @@
 import { ipcRenderer, shell } from 'electron';
 import { createClient } from '@supabase/supabase-js';
 import screenshot from 'screenshot-desktop';
-import fs from 'fs';
-import path from 'path';
-import dotenv from 'dotenv';
-import os from 'os';
-import crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+import { config as dotenvConfig } from 'dotenv';
+import * as os from 'os';
+import * as crypto from 'crypto';
 import sharp from 'sharp';
-import { Buffer } from 'buffer';
 
-dotenv.config();
+const Buffer = globalThis.Buffer;
+
+dotenvConfig();
 
 // App version (injected at build time for Chromebook PWA)
 const appVersion = (import.meta.env.VITE_APP_VERSION || '1.6.2').toString().trim();
