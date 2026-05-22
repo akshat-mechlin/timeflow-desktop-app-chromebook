@@ -1,3 +1,4 @@
+import '../styles.css';
 import { Buffer } from 'buffer';
 import process from 'process/browser';
 

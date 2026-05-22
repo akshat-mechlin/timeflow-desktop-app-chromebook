@@ -217,8 +217,7 @@ const FACE_DETECTOR_SCORE_THRESHOLD = 0.35; // Slightly lenient so farther/parti
 let faceApiModelsLoaded = false;
 let faceApiLoadPromise = null;
 
-// Run once at load: Electron needs browser DOM for face-api (avoids "Illegal constructor" in any renderer)
-(function patchFaceApiEnv() {
+function patchFaceApiEnv() {
   if (typeof faceapi === 'undefined' || !faceapi.env || typeof faceapi.env.monkeyPatch !== 'function') return;
   try {
     faceapi.env.monkeyPatch({
@@ -226,13 +225,51 @@ let faceApiLoadPromise = null;
       createImageElement: () => document.createElement('img')
     });
   } catch (_) {}
-})();
+}
+
+function loadScriptAsync(src) {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === '1') return resolve();
+      existing.addEventListener('load', resolve);
+      existing.addEventListener('error', reject);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.onload = () => {
+      script.dataset.loaded = '1';
+      resolve();
+    };
+    script.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureFaceApiScripts() {
+  if (typeof faceapi !== 'undefined') {
+    patchFaceApiEnv();
+    return true;
+  }
+  try {
+    await loadScriptAsync('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.7.0/dist/tf.min.js');
+    await loadScriptAsync('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js');
+    patchFaceApiEnv();
+    return typeof faceapi !== 'undefined';
+  } catch (err) {
+    console.warn('Face detection: could not load face-api scripts', err.message);
+    return false;
+  }
+}
 
 async function loadFaceApiModels() {
   if (faceApiModelsLoaded) return true;
   if (faceApiLoadPromise) return faceApiLoadPromise;
   faceApiLoadPromise = (async () => {
-    if (typeof faceapi === 'undefined') {
+    const scriptsOk = await ensureFaceApiScripts();
+    if (!scriptsOk || typeof faceapi === 'undefined') {
       console.warn('Face detection: face-api not loaded (script missing or blocked)');
       return false;
     }
@@ -1198,6 +1235,21 @@ let minimumRequiredVersion = null;
 let downloadUrl = null;
 let forceUpdate = false;
 
+const IS_WEB_DEPLOYMENT =
+  typeof window !== 'undefined' &&
+  (window.location.hostname.includes('github.io') || !window.location.href.startsWith('file:'));
+
+const INIT_TIMEOUT_MS = 15000;
+
+function withInitTimeout(promise, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${INIT_TIMEOUT_MS}ms`)), INIT_TIMEOUT_MS)
+    ),
+  ]);
+}
+
 // Compare version strings (e.g., "1.4.0" vs "1.3.0")
 function compareVersions(version1, version2) {
   const v1parts = version1.split('.').map(Number);
@@ -1564,7 +1616,8 @@ async function checkAuth() {
   try {
     console.log('Checking authentication...');
     if (!loadingContainer || !loginContainer || !dashboardContainer) {
-      console.error('DOM containers not ready');
+      console.warn('DOM containers not ready, retrying...');
+      setTimeout(checkAuth, 50);
       return;
     }
     // Show loading state while checking
@@ -1572,11 +1625,30 @@ async function checkAuth() {
     loginContainer.classList.add('hidden');
     dashboardContainer.classList.add('hidden');
 
-    // Version check: fetch required version from DB (tracker_required_version), then compare. No fallback — fetch failure blocks app.
-    const versionCheck = await checkAppVersion();
+    // Version check with timeout — web deployment proceeds to login if check fails/times out
+    let versionCheck;
+    try {
+      versionCheck = await withInitTimeout(checkAppVersion(), 'Version check');
+    } catch (versionErr) {
+      console.warn('Version check failed or timed out:', versionErr.message);
+      if (IS_WEB_DEPLOYMENT) {
+        isVersionValid = true;
+        versionCheck = { valid: true, reason: 'version_check_skipped_web' };
+      } else {
+        versionCheck = {
+          valid: false,
+          currentVersion: TRACKER_VERSION,
+          minimumVersion: '',
+          downloadUrl: null,
+          downloadUrls: null,
+          forceUpdate: true,
+        };
+      }
+    }
+
     if (!versionCheck.valid) {
       console.error('❌ Version check failed, blocking app access');
-      if (loadingContainer) loadingContainer.classList.add('hidden');
+      hideLoadingScreen();
       if (loginContainer) loginContainer.classList.add('hidden');
       if (dashboardContainer) dashboardContainer.classList.add('hidden');
       showUpdateRequiredModal({
@@ -1589,7 +1661,12 @@ async function checkAuth() {
       return;
     }
 
-    const { data: { session }, error } = await supabase.auth.getSession();
+    isVersionValid = true;
+
+    const { data: { session }, error } = await withInitTimeout(
+      supabase.auth.getSession(),
+      'Session check'
+    );
     
     if (error) {
       console.error('Error checking session:', error);
@@ -1600,30 +1677,31 @@ async function checkAuth() {
     if (session) {
       console.log('Session found, user:', session.user.email);
       currentUser = session.user;
-      
-      // Track version usage after login
-      await trackVersionUsage();
-      
       showDashboard();
+      trackVersionUsage().catch((err) => console.warn('Version tracking failed:', err));
     } else {
       console.log('No session found, showing login');
       showLogin();
     }
   } catch (error) {
     console.error('Error in checkAuth:', error);
+    isVersionValid = true;
     showLogin();
   }
 }
 
-function showLogin() {
-  if (!isVersionValid) return;
+function hideLoadingScreen() {
   if (loadingContainer) loadingContainer.classList.add('hidden');
+}
+
+function showLogin() {
+  hideLoadingScreen();
   if (loginContainer) loginContainer.classList.remove('hidden');
   if (dashboardContainer) dashboardContainer.classList.add('hidden');
 }
 
 async function showDashboard() {
-  if (loadingContainer) loadingContainer.classList.add('hidden');
+  hideLoadingScreen();
   if (loginContainer) loginContainer.classList.add('hidden');
   if (dashboardContainer) dashboardContainer.classList.remove('hidden');
   
