@@ -209,7 +209,8 @@ const SCREEN_COMPARER_COOLDOWN_MS = 2 * 60 * 1000; // Don't auto-stop for "uncha
 const ACTIVE_FOR_SCREEN_COMPARE_MS = 5 * 60 * 1000; // Same as inactivity threshold – if no activity in 5 min, don't trigger "unchanged"
 let lastContentHashForComparer = null;
 let consecutiveSameScreenCount = 0;
-// Face detection: lightweight check on start and every 5–7 min (no tape/black logic)
+// Face detection: optional telemetry only — never blocks tracking (supports low-quality cameras).
+const FACE_DETECTION_BLOCKS_TRACKING = false;
 const FACE_API_WEIGHTS_BASE = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
 // Higher inputSize = better for distant/small faces; 224 is a balance (128 was too strict at distance). Same tiny model, no extra download.
 // On very weak systems, try 160 for slightly less CPU while still better than 128.
@@ -288,13 +289,14 @@ async function loadFaceApiModels() {
 }
 
 /**
- * Returns true if at least one face is detected in the canvas. Minimal CPU: runs only when needed.
- * Uses inputSize 224 + lower scoreThreshold to improve detection when user is at a distance.
+ * Returns true if at least one face is detected in the canvas.
+ * When FACE_DETECTION_BLOCKS_TRACKING is false, always returns true (camera still required separately).
  */
 async function detectFaceInCanvas(canvas) {
+  if (!FACE_DETECTION_BLOCKS_TRACKING) return true;
   if (!canvas || canvas.width < 10 || canvas.height < 10) return false;
   const loaded = await loadFaceApiModels();
-  if (!loaded) return true; // allow when models unavailable (e.g. offline)
+  if (!loaded) return true;
   try {
     const opts = new faceapi.TinyFaceDetectorOptions({
       inputSize: FACE_DETECTOR_INPUT_SIZE,
@@ -304,7 +306,7 @@ async function detectFaceInCanvas(canvas) {
     return detections && detections.length > 0;
   } catch (err) {
     console.warn('Face detection: detect failed', err.message);
-    return true; // do not block on detection errors
+    return true;
   }
 }
 
@@ -2985,14 +2987,7 @@ async function startTracking() {
     console.log('Camera capture is disabled for this user - skipping camera device check');
   }
 
-  // Face check when camera is enabled: do not start unless a face is detected
-  if (captureSettings.enableCameraCapture) {
-    const faceDetected = await checkFaceBeforeStart();
-    if (!faceDetected) {
-      showCameraDetectionModal('Camera appears covered or blurry. Please ensure the camera has a clear view.', 'face');
-      return;
-    }
-  }
+  // Camera permission/device already verified above; face detection does not block start (low-quality cameras).
 
   // CRITICAL: Always check day cycle FIRST before starting tracking
   // This ensures we never start tracking with old day's data
@@ -4328,9 +4323,9 @@ async function getCameraStreamWithFallback(timeoutMs) {
   return tryGetUserMedia({ video: true });
 }
 
-/** One-off face check before starting tracker. Returns true if face detected or camera disabled. Releases stream. */
+/** Optional face check before start. Never blocks when FACE_DETECTION_BLOCKS_TRACKING is false. */
 async function checkFaceBeforeStart() {
-  if (!captureSettings.enableCameraCapture) return true;
+  if (!FACE_DETECTION_BLOCKS_TRACKING || !captureSettings.enableCameraCapture) return true;
   let stream = null;
   let video = null;
   try {
@@ -4488,27 +4483,10 @@ async function captureCamera() {
     
     console.log(`Camera frame captured: ${canvas.width}x${canvas.height}`);
 
-    // Face check every 5–7 min: stop tracker if no face detected
+    // Face detection is informational only — tracking continues even if no face is detected
     const faceDetected = await detectFaceInCanvas(canvas);
     if (!faceDetected) {
-      console.log('Face detection: no face in camera - stopping tracker');
-      if (stream && stream.getTracks) {
-        stream.getTracks().forEach(track => { try { track.stop(); } catch (e) {} });
-      }
-      if (video) {
-        try { video.pause(); video.srcObject = null; if (video.parentNode) video.parentNode.removeChild(video); } catch (_) {}
-      }
-      video = null;
-      stream = null;
-      await stopTracking();
-      if (statusDisplay) statusDisplay.textContent = 'Stopped: Camera covered or blur';
-      await ipcRenderer.invoke('show-overlay', {
-        title: 'Camera covered or blur',
-        message: 'Your camera appears covered or blurry. Tracking has been stopped.',
-        icon: '📷',
-        isStopped: true
-      });
-      return;
+      console.log('Face detection: no face in frame (continuing — low-quality cameras allowed)');
     }
 
     // CRITICAL: Release camera IMMEDIATELY after capturing frame
